@@ -1,0 +1,22 @@
+; Cesaroni M1520-BS Motor
+; Converted from ThrustCurve.org data
+; Total Impulse: 7579.1 N-s
+; Average Thrust: 1547.7 N
+; Peak Thrust: 1827.1 N
+; Burn Time: 4.897 s
+; Propellant Mass: 3737 g
+; Total Mass: 6718 g
+M1520-BS 98 548 0 4.897 3.737 Cesaroni
+    0.000 0.0
+    0.040 1427.8
+    0.082 1706.4
+    0.176 1620.5
+    0.748 1734.2
+    1.652 1827.1
+    2.676 1715.7
+    3.890 1423.2
+    4.399 1404.6
+    4.616 661.7
+    4.877 69.6
+    4.897 0.0
+;
