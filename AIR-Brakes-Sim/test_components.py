@@ -17,7 +17,7 @@ def test_imports():
         import pandas as pd
         print("  ✓ pandas")
         
-        from rocketpy import Rocket, SolidMotor, Environment, Flight, Function
+        from rocketpy import Rocket, GenericMotor, Environment, Flight, Function
         print("  ✓ rocketpy")
         
         print("All imports successful!")
@@ -30,7 +30,7 @@ def test_motor_creation():
     """Test motor creation"""
     print("\nTesting motor creation...")
     try:
-        from rocketpy import SolidMotor, Function
+        from rocketpy import Function, GenericMotor
         
         # Simple thrust curve
         thrust_curve = Function(
@@ -41,20 +41,14 @@ def test_motor_creation():
             extrapolation="zero"
         )
         
-        motor = SolidMotor(
+        motor = GenericMotor(
             thrust_source=thrust_curve,
             dry_mass=2.866,
-            dry_inertia=[0.001, 0.001, 0.0002],
-            center_of_dry_mass_position=0.317,
-            grain_number=4,
-            grain_density=1815,
-            grain_outer_radius=0.049,
-            grain_initial_inner_radius=0.015,
-            grain_initial_height=0.15,
-            grain_separation=0.005,
-            grains_center_of_mass_position=0.217,
             nozzle_radius=0.021,
-            throat_radius=0.010,
+            chamber_radius=0.064,
+            chamber_height=0.548,
+            chamber_position=0.274,
+            propellant_initial_mass=3.737,
             burn_time=3.0,
             nozzle_position=0,
             coordinate_system_orientation="nozzle_to_combustion_chamber"
@@ -88,9 +82,20 @@ def test_rocket_creation(motor):
             power_off_drag=drag_curve,
             power_on_drag=drag_curve,
             center_of_mass_without_motor=1.2,
-            coordinate_system_orientation="nose_to_tail"
+            coordinate_system_orientation="tail_to_nose"
         )
-        
+
+        rocket.add_trapezoidal_fins(
+            n=3,
+            span=0.13,
+            root_chord=0.268,
+            tip_chord=0.136,
+            position=0.273,
+            sweep_length=0.066,
+        )
+        rocket.add_nose(length=0.742, kind="Von Karman", position=2.229)
+        rocket.set_rail_buttons(0.69, 0.21, 60)
+
         # Add motor
         if motor:
             rocket.add_motor(motor, position=0)
@@ -143,6 +148,12 @@ def test_simple_flight(rocket, env):
         
         print("  Creating flight object...")
         start_time = time.time()
+
+        # env.info()
+        # rocket.draw()
+        # rocket.info()
+        # rocket.plots.drag_curves()
+        # rocket.motor.info()
         
         flight = Flight(
             rocket=rocket,
@@ -151,10 +162,13 @@ def test_simple_flight(rocket, env):
             inclination=86,
             heading=0,
             terminate_on_apogee=True,
-            max_time=30,
-            verbose=False
+            # max_time=30, # Using this without setting a max_time_step may cause unexpected errors
         )
-        
+
+        # flight.prints.initial_conditions()
+        flight.prints.maximum_values()
+        flight.prints.numerical_integration_settings()
+
         elapsed = time.time() - start_time
         print(f"  ✓ Flight simulation completed in {elapsed:.1f}s")
         print(f"  ✓ Apogee: {flight.apogee - env.elevation:.0f}m AGL")
