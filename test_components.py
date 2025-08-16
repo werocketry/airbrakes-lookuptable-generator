@@ -14,9 +14,6 @@ def test_imports():
         import numpy as np
         print("  ✓ numpy")
         
-        import pandas as pd
-        print("  ✓ pandas")
-        
         from rocketpy import Rocket, GenericMotor, Environment, Flight, Function
         print("  ✓ rocketpy")
         

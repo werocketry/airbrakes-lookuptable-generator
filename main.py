@@ -79,16 +79,9 @@ LAUNCH_RAIL_ANGLE = 86.8            # degrees TODO update
 TOLERANCE_BINARY_SEARCH = 0.5       # degrees TODO review
 
 # Lookup table parameters
-TESTING_MODE = True  # Set to False for full resolution 
-
-if TESTING_MODE:
-    # 10x10 grid for testing
-    HEIGHT_POINTS = 10
-    VELOCITY_POINTS = 10
-else:
-    # Full resolution TODO test speed of flight computer in accessing different size lookup tables, update this
-    HEIGHT_POINTS = 100
-    VELOCITY_POINTS = 100
+# TODO test speed of flight computer in accessing different size lookup tables, update this
+HEIGHT_POINTS = 100
+VELOCITY_POINTS = 100
 
 # Burnout state ranges TODO update based on sensitivity analysis
 BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, 560      # m
@@ -404,7 +397,6 @@ def main():
     """Main function"""
 
     print(f"\n=== CONFIGURATION ===")
-    print(f"Mode: {'TESTING (10x10)' if TESTING_MODE else f'FULL ({HEIGHT_POINTS}x{VELOCITY_POINTS})'}")
     print(f"Target Apogee: {TARGET_APOGEE_M}m")
     print(f"Grid Size: {HEIGHT_POINTS}×{VELOCITY_POINTS} = {HEIGHT_POINTS*VELOCITY_POINTS} burnout states")
     print(f"Height Range: {BURNOUT_HEIGHT_MIN}-{BURNOUT_HEIGHT_MAX}m")
@@ -433,11 +425,7 @@ def main():
         print("\n" + "=" * 60)
         print("✓ LOOKUP TABLE GENERATION COMPLETE")
         print("=" * 60)
-        
-        if TESTING_MODE:
-            print("\nNote: Generated testing table (10×10)")
-            print("Set TESTING_MODE = False for full resolution (1000×1000)")
-        
+                
     except KeyboardInterrupt:
         print("\n\n⚠ Generation interrupted by user")
     except Exception as e:
