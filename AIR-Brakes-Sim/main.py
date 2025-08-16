@@ -20,6 +20,9 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 from rocketpy import Rocket, EmptyMotor, Environment, Flight
+import copy
+import multiprocessing
+from multiprocessing import Pool
 
 
 TARGET_APOGEE_M = 3048              # 10,000 ft TODO update
@@ -154,12 +157,12 @@ def airbrakes_sim(environment, rocket, initial_solution, angle_this_run):
 
 # ================== Find Optimal Deployment ==================
 
-def find_optimal_deployment(h_burnout, vz_burnout):
+def build_simulation_base():
+    """Construct shared Environment and a base Rocket instance.
+
+    Returns (environment, rocket). The returned rocket should be treated as
+    a template and not modified directly by simulations (deepcopy before use).
     """
-    Returns the optimal angle and the time after burnout at which to retract for a given burnout state.
-    """
-    # TODO have all parameters that will be changed at top of file
-    # TODO defining these once outside the function instead of for every burnout state could give a speedup
     environment = Environment(
         latitude=LAUNCH_LATITUDE,
         longitude=LAUNCH_LONGITUDE,
@@ -190,6 +193,23 @@ def find_optimal_deployment(h_burnout, vz_burnout):
         position=0.314,
         sweep_length=0.0698
     )
+    return environment, rocket
+
+environment, base_rocket = build_simulation_base()
+
+def find_optimal_deployment(h_burnout, vz_burnout):
+    """Returns the optimal angle and the time after burnout at which to retract for a given burnout state.
+
+    This function expects shared simulation objects to be created once and reused.
+    """
+    # If shared objects not created, create them now
+    try:
+        environment
+        base_rocket
+    except NameError:
+        environment, base_rocket = build_simulation_base()
+    # Create fresh rocket instance for this simulation by deep-copying base_rocket. This avoids re-running the heavier construction logic and prevents accumulating airbrakes or other components on the same rocket object.
+    rocket = copy.deepcopy(base_rocket)
     # TODO confirm assumptions about burnout conditions
     vx_burnout = 0.08*vz_burnout
     vy_burnout = 0.08*vz_burnout
@@ -240,9 +260,21 @@ def find_optimal_deployment(h_burnout, vz_burnout):
 
 # ==================== LOOKUP TABLE GENERATION ====================
 
+def _worker_init():
+    """Worker initializer for multiprocessing: create per-process simulation templates."""
+    global environment, base_rocket
+    environment, base_rocket = build_simulation_base()
+
+def _worker_task(task):
+    """Top-level worker task. Expects (h, v) and returns (h, v, angle, retract_time)."""
+    h, v = task
+    deployment_angle, retraction_time = find_optimal_deployment(h + LAUNCH_ALTITUDE_MSL, v)
+    if retraction_time is None:
+        retraction_time = 0
+    return (h, v, deployment_angle, retraction_time)
+
 def generate_lookup_table():
     """Generate lookup table"""
-    
     print("\n=== GENERATING LOOKUP TABLE ===")
         
     # Create burnout states grid
@@ -255,35 +287,61 @@ def generate_lookup_table():
     # Generate lookup table
     lookup_table = []
     total_points = len(heights) * len(velocities)
-    point_count = 0
-    
     start_time = time.time()
-    
-    for height in heights:
-        for velocity in velocities:
-            point_count += 1
-            
-            # Progress indicator
-            if point_count % 10 == 0 or point_count == 1:
-                elapsed = time.time() - start_time
-                rate = point_count / elapsed if elapsed > 0 else 0
-                eta = (total_points - point_count) / rate if rate > 0 else 0
-                print(f"  Point {point_count}/{total_points} " +
-                      f"({100*point_count/total_points:.1f}%) " +
-                      f"ETA: {eta/60:.1f}min")
-            
-            # Find optimal deployment
-            deployment_angle, retraction_time = find_optimal_deployment(
-                height + LAUNCH_ALTITUDE_MSL, velocity
-            )
-            if retraction_time is None: retraction_time = 0
 
-            lookup_table.append({
-                'burnout_height_m': round(height, 2),
-                'burnout_velocity_ms': round(velocity, 2),
-                'deployment_angle_deg': round(deployment_angle, 4),
-                'retraction_time_s': round(retraction_time, 2)
-            })
+    # Build task list
+    tasks = [(float(h), float(v)) for h in heights for v in velocities]
+
+    cpu_count = multiprocessing.cpu_count()
+    use_parallel = cpu_count > 1 and total_points > 1
+
+    if use_parallel:
+        workers = min(cpu_count, total_points)
+        print(f"Running in parallel with {workers} workers (cpus={cpu_count})")
+        with Pool(processes=workers, initializer=_worker_init) as p:
+            completed = 0
+            for result in p.imap_unordered(_worker_task, tasks):
+                h, v, deployment_angle, retraction_time = result
+                lookup_table.append({
+                    'burnout_height_m': round(h, 2),
+                    'burnout_velocity_ms': round(v, 2),
+                    'deployment_angle_deg': round(deployment_angle, 4),
+                    'retraction_time_s': round(retraction_time, 2)
+                })
+                completed += 1
+                # Progress
+                if completed % max(1, total_points // 20) == 0 or completed == 1:
+                    elapsed = time.time() - start_time
+                    rate = completed / elapsed if elapsed > 0 else 0
+                    eta = (total_points - completed) / rate if rate > 0 else 0
+                    print(f"  Point {completed}/{total_points} ({100*completed/total_points:.1f}%) ETA: {eta/60:.1f}min")
+    else:
+        point_count = 0
+        for height in heights:
+            for velocity in velocities:
+                point_count += 1
+                # Progress indicator
+                if point_count % 10 == 0 or point_count == 1:
+                    elapsed = time.time() - start_time
+                    rate = point_count / elapsed if elapsed > 0 else 0
+                    eta = (total_points - point_count) / rate if rate > 0 else 0
+                    print(f"  Point {point_count}/{total_points} " +
+                          f"({100*point_count/total_points:.1f}%) " +
+                          f"ETA: {eta/60:.1f}min")
+
+                # Find optimal deployment
+                deployment_angle, retraction_time = find_optimal_deployment(
+                    height + LAUNCH_ALTITUDE_MSL, velocity
+                )
+                if retraction_time is None:
+                    retraction_time = 0
+
+                lookup_table.append({
+                    'burnout_height_m': round(height, 2),
+                    'burnout_velocity_ms': round(velocity, 2),
+                    'deployment_angle_deg': round(deployment_angle, 4),
+                    'retraction_time_s': round(retraction_time, 2)
+                })
     
     elapsed = time.time() - start_time
     print(f"\n✓ Generated {len(lookup_table)} entries in {elapsed:.1f}s")
@@ -295,6 +353,16 @@ def save_lookup_table(lookup_table, filename='lookup_table.csv'):
     
     print(f"\nSaving lookup table to {filename}...")
     
+    # Build index sets and mapping
+    heights = sorted({row['burnout_height_m'] for row in lookup_table})
+    velocities = sorted({row['burnout_velocity_ms'] for row in lookup_table})
+    cell_map = {
+        (row['burnout_height_m'], row['burnout_velocity_ms']): (
+            row['deployment_angle_deg'], row['retraction_time_s']
+        )
+        for row in lookup_table
+    }
+
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
         
@@ -305,22 +373,22 @@ def save_lookup_table(lookup_table, filename='lookup_table.csv'):
         writer.writerow([f'# Grid: {HEIGHT_POINTS}x{VELOCITY_POINTS}'])
         writer.writerow(['#'])
         
-        # Column headers
-        writer.writerow([
-            'burnout_height_m',
-            'burnout_velocity_ms', 
-            'deployment_angle_deg',
-            'retraction_time_s'
-        ])
+        # Table header: empty first cell, then velocity column headers
+        header_row = ['burnout_height_m \\ burnout_velocity_ms'] + [f"{v:.2f}" for v in velocities]
+        writer.writerow(header_row)
         
-        # Data rows
-        for row in lookup_table:
-            writer.writerow([
-                row['burnout_height_m'],
-                row['burnout_velocity_ms'],
-                row['deployment_angle_deg'],
-                row['retraction_time_s']
-            ])
+        # Data rows: each row starts with the height, then cells "angle;retraction_time"
+        for h in heights:
+            row = [f"{h:.2f}"]
+            for v in velocities:
+                val = cell_map.get((h, v))
+                if val is None:
+                    cell = ''
+                else:
+                    angle, retract = val
+                    cell = f"{angle};{retract}"
+                row.append(cell)
+            writer.writerow(row)
     
     # Print statistics
     angles = [row['deployment_angle_deg'] for row in lookup_table]
@@ -379,5 +447,5 @@ def main():
     # TODO make it optionally plot the angles over the lookup table as a colourmap
 
 if __name__ == "__main__":
-    # main()
-    print(find_optimal_deployment(1850, 200))
+    main()
+    # print(find_optimal_deployment(1850, 200))
