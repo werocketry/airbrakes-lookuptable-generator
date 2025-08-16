@@ -14,22 +14,12 @@ import numpy as np
 import csv
 from datetime import datetime
 import time
-import math
 import threading
 from queue import Queue, Empty
 import os
 import warnings
 warnings.filterwarnings('ignore')
-
-# Try to import RocketPy # TODO RocketPy modules imported will always be available, not useful
-try:
-    from rocketpy import Rocket, SolidMotor, EmptyMotor, Environment, Flight, Function
-    ROCKETPY_AVAILABLE = True
-    print("✓ RocketPy available and will be used for simulations")
-except ImportError as e:
-    print(f"⚠ RocketPy not available: {e}")
-    ROCKETPY_AVAILABLE = False
-
+from rocketpy import Rocket, EmptyMotor, Environment, Flight
 
 
 TARGET_APOGEE_M = 3048              # 10,000 ft TODO update
@@ -83,8 +73,7 @@ LAUNCH_RAIL_LENGTH = 5.18           # m TODO verify
 LAUNCH_RAIL_ANGLE = 86.8            # degrees TODO update
 
 # Simulation parameters
-BINARY_SEARCH_TOLERANCE = 8        # m # TODO decide on final value
-MAX_BINARY_ITERATIONS = 10         # Maximum iterations for binary search # TODO decide on final value
+TOLERANCE_BINARY_SEARCH = 0.5       # degrees TODO review
 
 # Lookup table parameters
 TESTING_MODE = True  # Set to False for full resolution 
@@ -164,7 +153,6 @@ def airbrakes_sim(environment, rocket, initial_solution, angle_this_run):
     return (flight_airbrakes.apogee - LAUNCH_ALTITUDE_MSL, retraction_time)
 
 # ================== Find Optimal Deployment ==================
-TOLERANCE_BINARY_SEARCH = 0.5  # degrees TODO review
 
 def find_optimal_deployment(h_burnout, vz_burnout):
     """
@@ -185,22 +173,22 @@ def find_optimal_deployment(h_burnout, vz_burnout):
             4.87,
             4.87,
             0.05,
-        ),
+        ), # TODO update
         power_off_drag = hyperion_drag_coefficient,
         power_on_drag = hyperion_drag_coefficient,
-        center_of_mass_without_motor=1.3,
+        center_of_mass_without_motor=1.3, # TODO update
         coordinate_system_orientation="tail_to_nose"
     )
-    rocket.set_rail_buttons(0.69, 0.21, 60)
-    rocket.add_nose(length=0.731, kind='von karman', position=2.073)
+    rocket.set_rail_buttons(0.69, 0.21, 60) # TODO update
+    rocket.add_nose(length=0.731, kind='von karman', position=2.073) # TODO update
     rocket.add_motor(motor, position=0)
-    rocket.add_trapezoidal_fins(
+    rocket.add_trapezoidal_fins( # TODO update
         3,
         span=0.135,
         root_chord=0.331,
         tip_chord=0.1395,
         position=0.314,
-        sweep_length=0.0698,
+        sweep_length=0.0698
     )
     # TODO confirm assumptions about burnout conditions
     vx_burnout = 0.08*vz_burnout
@@ -249,300 +237,6 @@ def find_optimal_deployment(h_burnout, vz_burnout):
         print(f"Apogee: {apogee:.0f}m AGL")
     return (upper_bound + lower_bound) / 2, retract_time
 
-# ==================== ROCKETPY SIMULATOR ====================
-
-class RocketPySimulator: # TODO doesn't actually use RocketPy...
-    """RocketPy simulation"""
-    
-    def __init__(self):
-        """Initialize RocketPy environment and rocket"""
-        
-        print("Initializing RocketPy simulator...")
-        
-        # Create environment
-        self.env = Environment(
-            latitude=LAUNCH_LATITUDE,
-            longitude=LAUNCH_LONGITUDE,
-            elevation=LAUNCH_ALTITUDE_MSL
-        )
-        self.env.set_atmospheric_model(type='standard_atmosphere')
-        # Create thrust function
-        thrust_function = Function(
-            source=MOTOR_THRUST_CURVE,
-            inputs='Time (s)',
-            outputs='Thrust (N)',
-            interpolation='linear'
-        )
-        
-        # Create motor
-        self.motor = SolidMotor( # TODO move values to configs at start of file
-            thrust_source=thrust_function,
-            burn_time=MOTOR_BURN_TIME,
-            dry_mass=MOTOR_DRY_MASS_KG,
-            dry_inertia=(0.125, 0.125, 0.002),  # Approximate
-            nozzle_radius=0.033,  # Approximate for 98mm motor
-            grain_number=4,  # Typical for M-class
-            grain_density=1800,  # kg/m³ typical for APCP
-            grain_outer_radius=0.049,  # 98mm motor
-            grain_initial_inner_radius=0.020,  # Approximate
-            grain_initial_height=0.120,  # Approximate
-            grain_separation=0.005,
-            grains_center_of_mass_position=0.3,
-            center_of_dry_mass_position=0.3,
-            nozzle_position=0,
-            coordinate_system_orientation='nozzle_to_combustion_chamber'
-        )
-
-        self.rocket = Rocket( # TODO update, move values to configs at start of file
-            radius=ROCKET_RADIUS,
-            mass=ROCKET_DRY_MASS_KG,
-            inertia=(6.321, 6.321, 0.034),  # Approximate
-            power_off_drag=Function(
-                lambda mach: hyperion_drag_coefficient(mach),
-                inputs='Mach',
-                outputs='Cd'
-            ),
-            power_on_drag=Function(
-                lambda mach: hyperion_drag_coefficient(mach) * 0.9,
-                inputs='Mach',
-                outputs='Cd'
-            ),
-            center_of_mass_without_motor=1.5,  # Approximate
-            coordinate_system_orientation='nose_to_tail'
-        )
-        
-        # Add motor # TODO move values to configs at start of file
-        self.rocket.add_motor(self.motor, position=2.5)
-        
-        # Add nose cone, fins, and rail buttons (simplified) # TODO move values to configs at start of file
-        self.rocket.add_nose(length=0.5, kind='von karman', position=0) # TODO update
-        self.rocket.add_trapezoidal_fins( # TODO update
-            n=3,
-            root_chord=0.120,
-            tip_chord=0.060,
-            span=0.110,
-            position=2.2
-        )
-        self.rocket.set_rail_buttons( # TODO update
-            upper_button_position=0.5,
-            lower_button_position=2.0,
-            angular_position=45
-        )
-        
-        print("✓ RocketPy simulator initialized")
-
-    def simulate_with_airbrakes(self, burnout_height, burnout_velocity, deployment_angle):
-        """
-        Simulate flight from burnout to apogee with airbrakes
-        
-        This is the key method that follows the PDF algorithm:
-        - Start from given burnout state
-        - Apply airbrakes at specified angle
-        - Calculate resulting apogee
-        """
-        
-        try:
-            # Create a modified rocket with airbrakes effect
-            airbrake_cd_addition = self._calculate_airbrake_drag(deployment_angle)
-            
-            # Modify drag curve to include airbrakes
-            def drag_with_airbrakes(mach):
-                base_cd = hyperion_drag_coefficient(mach)
-                return base_cd + airbrake_cd_addition
-            
-            # Create temporary rocket with modified drag
-            temp_rocket = Rocket(
-                radius=ROCKET_RADIUS,
-                mass=ROCKET_DRY_MASS_KG + MOTOR_DRY_MASS_KG,  # Burnout mass
-                inertia=(6.321, 6.321, 0.034),
-                power_off_drag=Function(
-                    drag_with_airbrakes,
-                    inputs='Mach',
-                    outputs='Cd'
-                ),
-                center_of_mass_without_motor=1.5,
-                coordinate_system_orientation='nose_to_tail'
-            )
-            
-            # Simplified coast phase simulation
-            # In reality, you'd need to properly initialize from burnout state
-            # This is a simplified approach
-            apogee = self._physics_based_apogee(
-                burnout_height, 
-                burnout_velocity, 
-                deployment_angle
-            )
-            
-            return apogee
-            
-        except Exception as e:
-            print(f"    RocketPy simulation failed: {e}")
-    
-    def _calculate_airbrake_drag(self, deployment_angle):
-        """Calculate additional drag coefficient from airbrakes"""
-        if deployment_angle <= 0:
-            return 0
-        
-        # Effective area of deployed flaps
-        sin_angle = math.sin(math.radians(deployment_angle))
-        total_airbrake_area = TOTAL_FLAP_AREA_M2 * sin_angle * FLAP_CD
-        
-        # Convert to drag coefficient contribution
-        airbrake_cd = total_airbrake_area / ROCKET_REFERENCE_AREA
-        
-        return airbrake_cd
-        
-    def find_optimal_deployment(self, burnout_height, burnout_velocity):
-        """
-        Find optimal deployment angle using binary search (PDF algorithm)
-        
-        This implements the exact algorithm from the PDF:
-        1. Check if no brakes needed (apogee < target)
-        2. Check if max brakes needed (apogee > target with max brakes)
-        3. Binary search for optimal angle
-        """
-        
-        # Step 1: Simulate with no airbrakes
-        apogee_no_brakes = self.simulate_with_airbrakes(
-            burnout_height, burnout_velocity, 0
-        )
-        
-        if apogee_no_brakes <= TARGET_APOGEE_M + BINARY_SEARCH_TOLERANCE:
-            # No airbrakes needed
-            return 0, self._calculate_retraction_time(0, burnout_velocity)
-        
-        # Step 2: Simulate with maximum airbrakes
-        apogee_max_brakes = self.simulate_with_airbrakes(
-            burnout_height, burnout_velocity, MAX_DEPLOYMENT_ANGLE
-        )
-        
-        if apogee_max_brakes >= TARGET_APOGEE_M - BINARY_SEARCH_TOLERANCE:
-            # Maximum airbrakes needed
-            retraction_time = self._calculate_retraction_time(
-                MAX_DEPLOYMENT_ANGLE, burnout_velocity
-            )
-            return MAX_DEPLOYMENT_ANGLE, retraction_time
-        
-        # Step 3: Binary search for optimal angle (PDF algorithm)
-        lower_bound = 0
-        upper_bound = MAX_DEPLOYMENT_ANGLE
-        best_angle = 0
-        
-        for iteration in range(MAX_BINARY_ITERATIONS):
-            if upper_bound - lower_bound < 0.01:  # Convergence
-                break
-            
-            deployment_angle = (upper_bound + lower_bound) / 2
-            apogee = self.simulate_with_airbrakes(
-                burnout_height, burnout_velocity, deployment_angle
-            )
-            
-            if abs(apogee - TARGET_APOGEE_M) <= BINARY_SEARCH_TOLERANCE:
-                best_angle = deployment_angle
-                break
-            
-            if apogee > TARGET_APOGEE_M:
-                lower_bound = deployment_angle
-            else:
-                upper_bound = deployment_angle
-            
-            best_angle = deployment_angle
-        
-        retraction_time = self._calculate_retraction_time(best_angle, burnout_velocity)
-        return best_angle, retraction_time
-    
-    def _calculate_retraction_time(self, deployment_angle, burnout_velocity): # TODO incorrect
-        """Calculate when to start retracting airbrakes"""
-        
-        # Estimate time to apogee
-        time_to_apogee = burnout_velocity / 9.81  # Simplified
-        
-        # Time needed to retract
-        retraction_duration = deployment_angle / RETRACTION_RATE
-        
-        # Start retraction with margin before apogee
-        margin = 2.0  # seconds
-        retraction_start = max(1.0, time_to_apogee - retraction_duration - margin)
-        
-        return retraction_start
-
-# ==================== PHYSICS-BASED FALLBACK ====================
-
-class PhysicsBasedSimulator: # TODO check logic
-    """Fallback physics-based simulator when RocketPy is unavailable"""
-    
-    def find_optimal_deployment(self, burnout_height, burnout_velocity):
-        """Find optimal deployment using physics calculations"""
-        
-        # Calculate apogee without airbrakes
-        apogee_no_brakes = self._calculate_apogee(
-            burnout_height, burnout_velocity, 0
-        )
-        
-        if apogee_no_brakes <= TARGET_APOGEE_M + BINARY_SEARCH_TOLERANCE:
-            return 0, 8.0
-        
-        # Calculate apogee with max airbrakes
-        apogee_max_brakes = self._calculate_apogee(
-            burnout_height, burnout_velocity, MAX_DEPLOYMENT_ANGLE
-        )
-        
-        if apogee_max_brakes >= TARGET_APOGEE_M - BINARY_SEARCH_TOLERANCE:
-            return MAX_DEPLOYMENT_ANGLE, 6.0
-        
-        # Binary search
-        lower_bound = 0
-        upper_bound = MAX_DEPLOYMENT_ANGLE
-        
-        for _ in range(MAX_BINARY_ITERATIONS):
-            if upper_bound - lower_bound < 0.01:
-                break
-            
-            angle = (upper_bound + lower_bound) / 2
-            apogee = self._calculate_apogee(burnout_height, burnout_velocity, angle)
-            
-            if abs(apogee - TARGET_APOGEE_M) <= BINARY_SEARCH_TOLERANCE:
-                break
-            
-            if apogee > TARGET_APOGEE_M:
-                lower_bound = angle
-            else:
-                upper_bound = angle
-        
-        retraction_time = max(1.0, burnout_velocity / 9.81 - angle / RETRACTION_RATE - 2)
-        return angle, retraction_time
-    
-    def _calculate_apogee(self, h0, v0, deployment_angle):
-        """Simple physics-based apogee calculation"""
-        
-        # Airbrake drag contribution
-        if deployment_angle > 0:
-            sin_angle = math.sin(math.radians(deployment_angle))
-            airbrake_area = TOTAL_FLAP_AREA_M2 * sin_angle * FLAP_CD
-            airbrake_cd = airbrake_area / ROCKET_REFERENCE_AREA
-        else:
-            airbrake_cd = 0
-        
-        # Numerical integration
-        dt = 0.01
-        h = h0
-        v = v0
-        
-        while v > 0.1:
-            # Atmospheric density
-            rho = 1.225 * math.exp(-(h + LAUNCH_ALTITUDE_MSL) / 8400)
-            
-            # Drag
-            mach = v / 343
-            total_cd = hyperion_drag_coefficient(mach) + airbrake_cd
-            drag_force = 0.5 * rho * total_cd * ROCKET_REFERENCE_AREA * v * v
-            drag_accel = drag_force / (ROCKET_DRY_MASS_KG + MOTOR_DRY_MASS_KG)
-            
-            # Update
-            v -= (9.81 + drag_accel) * dt
-            h += v * dt
-        
-        return h
 
 # ==================== LOOKUP TABLE GENERATION ====================
 
@@ -608,7 +302,6 @@ def save_lookup_table(lookup_table, filename='lookup_table.csv'):
         writer.writerow(['# Airbrakes Lookup Table - Hyperion with Cesaroni M2505'])
         writer.writerow([f'# Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
         writer.writerow([f'# Target Apogee: {TARGET_APOGEE_M}m'])
-        writer.writerow([f'# Method: {"RocketPy" if ROCKETPY_AVAILABLE else "Physics-based"}'])
         writer.writerow([f'# Grid: {HEIGHT_POINTS}x{VELOCITY_POINTS}'])
         writer.writerow(['#'])
         
@@ -686,5 +379,5 @@ def main():
     # TODO make it optionally plot the angles over the lookup table as a colourmap
 
 if __name__ == "__main__":
-    main()
-    # print(find_optimal_deployment(1850, 200))
+    # main()
+    print(find_optimal_deployment(1850, 200))
