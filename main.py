@@ -80,12 +80,12 @@ TOLERANCE_BINARY_SEARCH = 0.5       # degrees TODO review
 
 # Lookup table parameters
 # TODO test speed of flight computer in accessing different size lookup tables, update this
-HEIGHT_POINTS = 100
-VELOCITY_POINTS = 100
+HEIGHT_POINTS = 20
+VELOCITY_POINTS = 20
 
 # Burnout state ranges TODO update based on sensitivity analysis
 BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, 560      # m
-BURNOUT_VELOCITY_MIN, BURNOUT_VELOCITY_MAX = 140, 340  # m/s
+BURNOUT_VELOCITY_MIN, BURNOUT_VELOCITY_MAX = 200, 340  # m/s
 
 # ========================= SIMULATOR =========================
 SIN_THETA_MAX = np.sin(np.deg2rad(MAX_DEPLOYMENT_ANGLE))
@@ -224,7 +224,7 @@ def find_optimal_deployment(h_burnout, vz_burnout):
         initial_solution=initial_solution
     )
     if flight_no_brakes.apogee - LAUNCH_ALTITUDE_MSL < TARGET_APOGEE_M:
-        print(f'No airbrakes needed for h={h_burnout:.0f}m, vz={vz_burnout:.0f}m/s')
+        print(f'No airbrakes needed for h={h_burnout-LAUNCH_ALTITUDE_MSL:.0f}m, vz={vz_burnout:.0f}m/s')
         return 0, None
 
     # If airbrakes deployment needed, check if max deployment isn't overkill
@@ -232,7 +232,7 @@ def find_optimal_deployment(h_burnout, vz_burnout):
     print(f"Apogee for max airbrakes deployment: {flight_max_brakes[0]:.0f}m")
 
     if flight_max_brakes[0] > TARGET_APOGEE_M:
-        print(f'Max airbrakes deployment needed for h={h_burnout:.0f}m, vz={vz_burnout:.0f}m/s')
+        print(f'Max airbrakes deployment needed for h={h_burnout-LAUNCH_ALTITUDE_MSL:.0f}m, vz={vz_burnout:.0f}m/s')
         return MAX_DEPLOYMENT_ANGLE, flight_max_brakes[1]
 
     # If an intermediate amount of stopping power is needed, run binary search
@@ -432,7 +432,6 @@ def main():
         print(f"\n\n✗ Error during generation: {e}")
         import traceback
         traceback.print_exc()
-    # TODO make it optionally plot the angles over the lookup table as a colourmap
 
 if __name__ == "__main__":
     main()
