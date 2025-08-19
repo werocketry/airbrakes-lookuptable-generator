@@ -29,10 +29,21 @@ TARGET_APOGEE_M = 3048              # 10,000 ft TODO update
 
 # ==================== HYPERION CONFIGURATION ====================
 
+# Cesaroni M2505 motor parameters NOTE will keep the values about before burnout here even though not needed for lookup table generation. Good to have everything in one place, might use to better bound the lookup table domain
+MOTOR_DRY_MASS = 2.866              # kg
+MOTOR_PROPELLANT_MASS = 3.713       # kg
+MOTOR_BURN_TIME = 3.0               # seconds
+MOTOR_THRUST_CURVE = [              # Time (s), Thrust (N)
+    [0, 0], [0.12, 2600], [0.21, 2482], [0.6, 2715],
+    [0.9, 2876], [1.2, 2938], [1.5, 2889], [1.8, 2785],
+    [2.1, 2573], [2.4, 2349], [2.7, 2182], [2.99, 85], [3, 0]
+    ] # from https://www.thrustcurve.org/motors/Cesaroni/7450M2505-P/
+
 # Rocket parameters
-ROCKET_DRY_MASS_KG = 20.5           # kg, without motor installed # TODO update with final mass once assembled
-ROCKET_DIAMETER_M = 0.143           # 14.3cm diameter # TODO verify
-ROCKET_RADIUS = ROCKET_DIAMETER_M / 2
+ROCKET_DRY_MASS = 20.5           # kg, without motor installed # TODO update with final mass once assembled
+TOTAL_DRY_MASS = ROCKET_DRY_MASS + MOTOR_DRY_MASS
+ROCKET_DIAMETER = 0.1427            # m
+ROCKET_RADIUS = ROCKET_DIAMETER / 2
 ROCKET_REFERENCE_AREA = np.pi * ROCKET_RADIUS**2  # m²
 
 def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data
@@ -49,16 +60,6 @@ def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve
     else:
         return 0.60
 
-# Cesaroni M2505 motor parameters NOTE will keep the values about before burnout here even though not needed for lookup table generation. Good to have everything in one place, might use to better bound the lookup table domain
-MOTOR_DRY_MASS_KG = 2.310           # kg # TODO mass our casing, update
-MOTOR_PROPELLANT_MASS_KG = 3.423    # kg # TODO mass our casing after fuel inserted, subtract empty casing mass, update
-MOTOR_BURN_TIME = 3.0               # seconds
-MOTOR_THRUST_CURVE = [              # Time (s), Thrust (N)
-    [0, 0], [0.12, 2600], [0.21, 2482], [0.6, 2715],
-    [0.9, 2876], [1.2, 2938], [1.5, 2889], [1.8, 2785],
-    [2.1, 2573], [2.4, 2349], [2.7, 2182], [2.99, 85], [3, 0]
-    ] # from https://www.thrustcurve.org/motors/Cesaroni/7450M2505-P/
-
 # Airbrakes parameters
 NUM_FLAPS = 3
 PER_FLAP_AREA_M2 = 0.004215        # m² per flap TODO measure new flaps, update
@@ -67,31 +68,89 @@ FLAP_CD = 0.95                     # Drag coefficient of flaps TODO update
 MAX_DEPLOYMENT_ANGLE = 45          # degrees TODO update
 DEPLOYMENT_RATE = 5.5              # deg/s under load TODO update after deployment rate under load testing
 RETRACTION_RATE = 10.0             # deg/s unloaded TODO update after unloaded retraction rate testing
+CLOSING_MARGIN = 2 # s TODO review
 
 # Launch conditions # TODO add more environmental properties: temp, pressure, wind
 LAUNCH_ALTITUDE_MSL = 364           # m, from https://earth.google.com/web/search/Launch+Canada+Launch+Pad/@47.9869503,-81.8485488,363.96383335a,679.10907018d,35y
 LAUNCH_LATITUDE = 47.9870           # from https://maps.app.goo.gl/n76cD331j7LiQiTB6
 LAUNCH_LONGITUDE = -81.8486         # from https://maps.app.goo.gl/n76cD331j7LiQiTB6
-LAUNCH_RAIL_LENGTH = 5.18           # m TODO verify
-LAUNCH_RAIL_ANGLE = 86.8            # degrees TODO update
+LAUNCH_RAIL_LENGTH = 5.64           # m
+LAUNCH_RAIL_ANGLE = 84              # degrees
+
+LAUNCHPAD_TEMP = 18                 # deg C TODO update
+LAUNCHPAD_PRESSURE = 102800         # Pa TODO update https://www.timeanddate.com/weather/@5914408/historic
+WIND_EAST = 2                       # m/s TODO update
+WIND_NORTH = 2                      # m/s TODO update
 
 # Simulation parameters
 TOLERANCE_BINARY_SEARCH = 0.5       # degrees TODO review
 
 # Lookup table parameters
 # TODO test speed of flight computer in accessing different size lookup tables, update this
-HEIGHT_POINTS = 20
-VELOCITY_POINTS = 20
+HEIGHT_POINTS = 10
+VELOCITY_POINTS = 10
 
 # Burnout state ranges TODO update based on sensitivity analysis
 BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, 560      # m
 BURNOUT_VELOCITY_MIN, BURNOUT_VELOCITY_MAX = 200, 340  # m/s
 
+# ====================== ENVIRONMENT SETUP ====================
+TEMP_LAPSE_RATE = 6.5e-3 # deg C/m
+TEMP_SEA_LEVEL = LAUNCHPAD_TEMP + TEMP_LAPSE_RATE*LAUNCH_ALTITUDE_MSL + 273.15
+def temp_at_h_ASL(h):
+    return TEMP_SEA_LEVEL - TEMP_LAPSE_RATE*h
+
+def get_local_gravity(latitude, h = 0):
+    """
+    Calculate the acceleration due to gravity at a given latitude and altitude above sea level.
+    Args
+    ----
+    latitude : float
+        Latitude of launch site in degrees.
+    h : float
+        Ground level elevation above sea level in meters. Defaults to 0.
+
+    Returns
+    -------
+    float
+        Acceleration due to gravity in meters per second squared.
+
+    References
+    ----------
+    Based on the International Gravity Formula 1980 (IGF80) model, as outlined in https://en.wikipedia.org/wiki/Theoretical_gravity#International_gravity_formula_1980
+    """
+
+    gamma_a = 9.780327  # m/s^2
+    c1 = 0.0052790414
+    c2 = 0.0000232718
+    c3 = 0.0000001262
+    c4 = 0.0000000007
+
+    phi = np.deg2rad(latitude)
+
+    gamma_0 = gamma_a * (1 + c1 * np.sin(phi)**2 + c2 * np.sin(phi)**4 + c3 * np.sin(phi)**6 + c4 * np.sin(phi)**8)
+
+
+    k1 = 3.15704e-07  # 1/m
+    k2 = 2.10269e-09  # 1/m
+    k3 = 7.37452e-14  # 1/m^2
+
+    g_launchpad = gamma_0 * (1 - (k1 - k2 * np.sin(phi)**2) * h + k3 * h**2)
+
+    return g_launchpad
+
+GRAVITY_MAGNITUDE = get_local_gravity(LAUNCH_LATITUDE, LAUNCH_ALTITUDE_MSL)
+R_universal = 8.3144598
+MM_air = 0.0289644
+R_AIR = R_universal / MM_air
+
+def pressure_at_h_ASL(h):
+    h_agl = h - LAUNCH_ALTITUDE_MSL
+    return LAUNCHPAD_PRESSURE * pow(1-h_agl*TEMP_LAPSE_RATE/(LAUNCHPAD_TEMP+273.15), GRAVITY_MAGNITUDE/(R_AIR*TEMP_LAPSE_RATE))
+
 # ========================= SIMULATOR =========================
 SIN_THETA_MAX = np.sin(np.deg2rad(MAX_DEPLOYMENT_ANGLE))
-CLOSING_MARGIN = 2 # TODO review
-CONTROLLER_SAMPLING_RATE = 4 # TODO confirm this is high enough
-TOTAL_DRY_MASS = ROCKET_DRY_MASS_KG + MOTOR_DRY_MASS_KG
+CONTROLLER_SAMPLING_RATE = 8
 
 def airbrakes_sim(environment, rocket, initial_solution, angle_this_run):
     """
@@ -159,8 +218,17 @@ def build_simulation_base():
     environment = Environment(
         latitude=LAUNCH_LATITUDE,
         longitude=LAUNCH_LONGITUDE,
-        elevation=LAUNCH_ALTITUDE_MSL
+        elevation=LAUNCH_ALTITUDE_MSL,
+        max_expected_height=5000
     )
+    environment.set_atmospheric_model(
+        'custom_atmosphere',
+        temperature = temp_at_h_ASL,
+        pressure = pressure_at_h_ASL,
+        wind_u = WIND_EAST,
+        wind_v = WIND_NORTH
+    )
+
     motor = EmptyMotor()
     rocket = Rocket(
         radius=ROCKET_RADIUS,
