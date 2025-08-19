@@ -14,9 +14,6 @@ import numpy as np
 import csv
 from datetime import datetime
 import time
-import threading
-from queue import Queue, Empty
-import os
 import warnings
 warnings.filterwarnings('ignore')
 from rocketpy import Rocket, EmptyMotor, Environment, Flight
@@ -27,50 +24,7 @@ from multiprocessing import Pool
 
 TARGET_APOGEE_M = 3048              # 10,000 ft TODO update
 
-# ==================== HYPERION CONFIGURATION ====================
-
-# Cesaroni M2505 motor parameters NOTE will keep the values about before burnout here even though not needed for lookup table generation. Good to have everything in one place, might use to better bound the lookup table domain
-MOTOR_DRY_MASS = 2.866              # kg
-MOTOR_PROPELLANT_MASS = 3.713       # kg
-MOTOR_BURN_TIME = 3.0               # seconds
-MOTOR_THRUST_CURVE = [              # Time (s), Thrust (N)
-    [0, 0], [0.12, 2600], [0.21, 2482], [0.6, 2715],
-    [0.9, 2876], [1.2, 2938], [1.5, 2889], [1.8, 2785],
-    [2.1, 2573], [2.4, 2349], [2.7, 2182], [2.99, 85], [3, 0]
-    ] # from https://www.thrustcurve.org/motors/Cesaroni/7450M2505-P/
-
-# Rocket parameters
-ROCKET_DRY_MASS = 20.5           # kg, without motor installed # TODO update with final mass once assembled
-TOTAL_DRY_MASS = ROCKET_DRY_MASS + MOTOR_DRY_MASS
-ROCKET_DIAMETER = 0.1427            # m
-ROCKET_RADIUS = ROCKET_DIAMETER / 2
-ROCKET_REFERENCE_AREA = np.pi * ROCKET_RADIUS**2  # m²
-
-def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data
-    """Hyperion Cd function from RASAero II"""
-    # Simplified version - full implementation would include all points
-    if mach <= 0.5:
-        return 0.40
-    elif mach <= 0.8:
-        return 0.38
-    elif mach <= 0.95:
-        return 0.40 + (mach - 0.8) * (0.45 - 0.40) / (0.95 - 0.8)
-    elif mach <= 1.05:
-        return 0.45 + (mach - 0.95) * (0.60 - 0.45) / (1.05 - 0.95)
-    else:
-        return 0.60
-
-# Airbrakes parameters
-NUM_FLAPS = 3
-PER_FLAP_AREA_M2 = 0.004215        # m² per flap TODO measure new flaps, update
-TOTAL_FLAP_AREA_M2 = NUM_FLAPS * PER_FLAP_AREA_M2  # m² total
-FLAP_CD = 0.95                     # Drag coefficient of flaps TODO update
-MAX_DEPLOYMENT_ANGLE = 45          # degrees TODO update
-DEPLOYMENT_RATE = 5.5              # deg/s under load TODO update after deployment rate under load testing
-RETRACTION_RATE = 10.0             # deg/s unloaded TODO update after unloaded retraction rate testing
-CLOSING_MARGIN = 2 # s TODO review
-
-# Launch conditions # TODO add more environmental properties: temp, pressure, wind
+# ====================== ENVIRONMENT SETUP ====================
 LAUNCH_ALTITUDE_MSL = 364           # m, from https://earth.google.com/web/search/Launch+Canada+Launch+Pad/@47.9869503,-81.8485488,363.96383335a,679.10907018d,35y
 LAUNCH_LATITUDE = 47.9870           # from https://maps.app.goo.gl/n76cD331j7LiQiTB6
 LAUNCH_LONGITUDE = -81.8486         # from https://maps.app.goo.gl/n76cD331j7LiQiTB6
@@ -82,19 +36,6 @@ LAUNCHPAD_PRESSURE = 102800         # Pa TODO update https://www.timeanddate.com
 WIND_EAST = 2                       # m/s TODO update
 WIND_NORTH = 2                      # m/s TODO update
 
-# Simulation parameters
-TOLERANCE_BINARY_SEARCH = 0.5       # degrees TODO review
-
-# Lookup table parameters
-# TODO test speed of flight computer in accessing different size lookup tables, update this
-HEIGHT_POINTS = 10
-VELOCITY_POINTS = 10
-
-# Burnout state ranges TODO update based on sensitivity analysis
-BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, 560      # m
-BURNOUT_VELOCITY_MIN, BURNOUT_VELOCITY_MAX = 200, 340  # m/s
-
-# ====================== ENVIRONMENT SETUP ====================
 TEMP_LAPSE_RATE = 6.5e-3 # deg C/m
 TEMP_SEA_LEVEL = LAUNCHPAD_TEMP + TEMP_LAPSE_RATE*LAUNCH_ALTITUDE_MSL + 273.15
 def temp_at_h_ASL(h):
@@ -147,6 +88,72 @@ R_AIR = R_universal / MM_air
 def pressure_at_h_ASL(h):
     h_agl = h - LAUNCH_ALTITUDE_MSL
     return LAUNCHPAD_PRESSURE * pow(1-h_agl*TEMP_LAPSE_RATE/(LAUNCHPAD_TEMP+273.15), GRAVITY_MAGNITUDE/(R_AIR*TEMP_LAPSE_RATE))
+
+# ==================== HYPERION CONFIGURATION ====================
+
+# Cesaroni M2505 motor parameters
+MOTOR_DRY_MASS = 2.866              # kg
+MOTOR_PROPELLANT_MASS = 3.713       # kg
+MOTOR_BURN_TIME = 3.0               # seconds
+MOTOR_THRUST_CURVE = [              # Time (s), Thrust (N)
+    [0, 0], [0.12, 2600], [0.21, 2482], [0.6, 2715],
+    [0.9, 2876], [1.2, 2938], [1.5, 2889], [1.8, 2785],
+    [2.1, 2573], [2.4, 2349], [2.7, 2182], [2.99, 85], [3, 0]
+    ] # from https://www.thrustcurve.org/motors/Cesaroni/7450M2505-P/
+MOTOR_IMPULSE = np.trapezoid(
+    np.array([point[1] for point in MOTOR_THRUST_CURVE]),
+    np.array([point[0] for point in MOTOR_THRUST_CURVE])
+) # both thrustcurve.org files list lower impulses than the 7450 N*s from the mfr, and which are much closer to the integral of the thrust curve
+
+# Rocket parameters
+ROCKET_DRY_MASS = 20.5           # kg, without motor installed # TODO update with final mass once assembled
+TOTAL_DRY_MASS = ROCKET_DRY_MASS + MOTOR_DRY_MASS
+ROCKET_DIAMETER = 0.1427            # m
+ROCKET_RADIUS = ROCKET_DIAMETER / 2
+ROCKET_REFERENCE_AREA = np.pi * ROCKET_RADIUS**2  # m²
+
+def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data
+    """Hyperion Cd function from RASAero II"""
+    # Simplified version - full implementation would include all points
+    if mach <= 0.5:
+        return 0.40
+    elif mach <= 0.8:
+        return 0.38
+    elif mach <= 0.95:
+        return 0.40 + (mach - 0.8) * (0.45 - 0.40) / (0.95 - 0.8)
+    elif mach <= 1.05:
+        return 0.45 + (mach - 0.95) * (0.60 - 0.45) / (1.05 - 0.95)
+    else:
+        return 0.60
+
+# Airbrakes parameters
+NUM_FLAPS = 3
+PER_FLAP_AREA_M2 = 0.004215        # m² per flap TODO measure new flaps, update
+TOTAL_FLAP_AREA_M2 = NUM_FLAPS * PER_FLAP_AREA_M2  # m² total
+FLAP_CD = 0.95                     # Drag coefficient of flaps TODO update
+MAX_DEPLOYMENT_ANGLE = 45          # degrees TODO update
+DEPLOYMENT_RATE = 5.5              # deg/s under load TODO update after deployment rate under load testing
+RETRACTION_RATE = 10.0             # deg/s unloaded TODO update after unloaded retraction rate testing
+CLOSING_MARGIN = 2 # s
+
+# Simulation parameters
+TOLERANCE_BINARY_SEARCH = 0.5       # degrees
+
+# Lookup table parameters
+# TODO test speed of flight computer in accessing different size lookup tables, update this
+HEIGHT_POINTS = 10
+VELOCITY_POINTS = 10
+
+# Burnout state ranges TODO update based on sensitivity analysis
+# NOTE THEORETICAL_MAX_VELOCITY and THEORETICAL_MAX_BURNOUT_HEIGHT are actually significantly higher than the theoretical maxima. They assumes no drag, a perfectly vertical launch, and no weathercocking on leaving the rail(/no wind)
+THEORETICAL_MAX_VELOCITY = (MOTOR_IMPULSE / TOTAL_DRY_MASS - GRAVITY_MAGNITUDE * MOTOR_BURN_TIME) * 1.05
+thrust_times = np.array([pt[0] for pt in MOTOR_THRUST_CURVE])
+accels = np.array([pt[1] for pt in MOTOR_THRUST_CURVE]) / TOTAL_DRY_MASS
+THEORETICAL_MAX_BURNOUT_HEIGHT = np.trapezoid((MOTOR_BURN_TIME - thrust_times) * accels, thrust_times) * 1.05
+
+
+BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, THEORETICAL_MAX_BURNOUT_HEIGHT      # m
+BURNOUT_VELOCITY_MIN, BURNOUT_VELOCITY_MAX = 200, THEORETICAL_MAX_VELOCITY        # m/s
 
 # ========================= SIMULATOR =========================
 SIN_THETA_MAX = np.sin(np.deg2rad(MAX_DEPLOYMENT_ANGLE))
@@ -297,7 +304,6 @@ def find_optimal_deployment(h_burnout, vz_burnout):
 
     # If airbrakes deployment needed, check if max deployment isn't overkill
     flight_max_brakes = airbrakes_sim(environment, rocket, initial_solution, MAX_DEPLOYMENT_ANGLE)
-    print(f"Apogee for max airbrakes deployment: {flight_max_brakes[0]:.0f}m")
 
     if flight_max_brakes[0] > TARGET_APOGEE_M:
         print(f'Max airbrakes deployment needed for h={h_burnout-LAUNCH_ALTITUDE_MSL:.0f}m, vz={vz_burnout:.0f}m/s')
@@ -309,13 +315,12 @@ def find_optimal_deployment(h_burnout, vz_burnout):
     upper_bound = MAX_DEPLOYMENT_ANGLE
     while upper_bound - lower_bound > TOLERANCE_BINARY_SEARCH:
         deployment_angle = (upper_bound + lower_bound) / 2
-        print(f"Simulating for deployment angle {deployment_angle:.1f}°")
         apogee, retract_time = airbrakes_sim(environment, rocket, initial_solution, deployment_angle)
         if apogee > TARGET_APOGEE_M:
             lower_bound = deployment_angle
         else:
             upper_bound = deployment_angle
-        print(f"Apogee: {apogee:.0f}m AGL")
+    print(f"Optimal deployment angle: {(upper_bound + lower_bound) / 2:.1f}° for h={h_burnout-LAUNCH_ALTITUDE_MSL:.0f}m, vz={vz_burnout:.0f}m/s")
     return (upper_bound + lower_bound) / 2, retract_time
 
 
