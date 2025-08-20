@@ -79,6 +79,5 @@ ax.set_ylabel('Burnout height (m)')
 ax.set_title('Lookup table: deployment angle (deg)')
 
 plt.tight_layout()
-print(f"Displaying plot for {csv_path} (colormap={cmap})")
 plt.show()
 plt.close(fig)

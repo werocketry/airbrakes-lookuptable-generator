@@ -136,9 +136,11 @@ CLOSING_MARGIN = 2 # s
 # Simulation parameters
 TOLERANCE_BINARY_SEARCH = 0.5       # degrees
 
-# Use the same portion of horizontal/vertical velocities at burnout as Hyperion I, assume same velocity in both horizontal directions. Actually imported later
-BURNOUT_VX_PORTION_OF_V = None
-BURNOUT_VY_PORTION_OF_V = None
+# Use the same portion of horizontal/vertical velocities at burnout as ork projects, assume same velocity in both horizontal directions
+BURNOUT_V_HORIZONTAL_PROPORTION_OF_V = 0.05
+BURNOUT_VX_PROPORTION_OF_V = BURNOUT_V_HORIZONTAL_PROPORTION_OF_V / np.sqrt(2)
+BURNOUT_VY_PROPORTION_OF_V = BURNOUT_VX_PROPORTION_OF_V
+BURNOUT_V_Z_PROPORTION_OF_V = np.sqrt(1 - BURNOUT_V_HORIZONTAL_PROPORTION_OF_V**2)
 
 # Lookup table parameters
 # TODO test speed of flight computer in accessing different size lookup tables, update this
@@ -182,7 +184,7 @@ def airbrakes_sim(environment, rocket, initial_solution, angle_this_run):
         t_to_close = deployment_angle / RETRACTION_RATE
         
         if t_to_close >= - vz / az - CLOSING_MARGIN or retraction_time: # retract if you need to retract to be closed at apogee, or have already started retracting
-            new_deployment_angle = max(0, deployment_angle - RETRACTION_RATE / sampling_rate) # TODO update from this worst case one which assumes drag doesn't decrease if it makes much difference/is worth it
+            new_deployment_angle = max(0, deployment_angle - RETRACTION_RATE / sampling_rate) # TODO Could update from this worst case one which assumes drag doesn't decrease if it makes much difference/is worth it. Probably not for this launch
             if not retraction_time:
                 retraction_time = time
         else: # extend to/maintain the desired angle if not retracting yet
@@ -271,15 +273,6 @@ def find_optimal_deployment(h_burnout, vz_burnout):
 
     This function expects shared simulation objects to be created once and reused.
     """
-    # Lazily import the back_calc_drag constants here to avoid circular imports
-    from back_calc_drag import (
-        BURNOUT_V_Z_PROPORTION_OF_V,
-        BURNOUT_V_HORIZONTAL_PORTION_OF_V,
-    )
-    # compute the vx/vy proportions derived from the imported constants
-    BURNOUT_VX_PORTION_OF_V = BURNOUT_V_HORIZONTAL_PORTION_OF_V / np.sqrt(2)
-    BURNOUT_VY_PORTION_OF_V = BURNOUT_VX_PORTION_OF_V
-
     # If shared objects not created, create them now
     try:
         environment
@@ -288,8 +281,8 @@ def find_optimal_deployment(h_burnout, vz_burnout):
         environment, base_rocket = build_simulation_base()
     # Create fresh rocket instance for this simulation by deep-copying base_rocket. This avoids re-running the heavier construction logic and prevents accumulating airbrakes or other components on the same rocket object.
     rocket = copy.deepcopy(base_rocket)
-    vx_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VX_PORTION_OF_V
-    vy_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VY_PORTION_OF_V
+    vx_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VX_PROPORTION_OF_V
+    vy_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VY_PROPORTION_OF_V
     burnout_orientation = [0.965,-0.007,0.043,-0.257] # TODO confirm assumptions about this burnout condition
     initial_solution=[
         0,

@@ -3,11 +3,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 df = pd.read_csv('2024-06-21-serial-6583-flight-0004.csv')
-# drop all rows after 24 s
-df = df.loc[df['time'] <= 24]
-
-# drop all rows before -0.1 s
+# drop all rows after 23.7 s and all rows before -0.1 s, add 0.1 s to each time value
+df = df.loc[df['time'] <= 23.7]
 df = df.loc[df['time'] >= -0.1]
+df['time'] = df['time'] + 0.1
 
 # drop all but one row when rows have identical times
 df = df.loc[df['time'].diff() != 0]
@@ -26,10 +25,6 @@ heights_raw = df['height']
 pressures = df['pressure']
 accelerations = df['acceleration']
 
-BURNOUT_VX_PORTION_OF_V = 0.08
-BURNOUT_VY_PORTION_OF_V = 0.08
-BURNOUT_VZ_PORTION_OF_V = np.sqrt(1 - (BURNOUT_VX_PORTION_OF_V**2 + BURNOUT_VY_PORTION_OF_V**2))
-
 def cumtrapz_np(y, x):
     y = np.asarray(y, dtype=float)
     x = np.asarray(x, dtype=float)
@@ -40,7 +35,7 @@ def cumtrapz_np(y, x):
 velocity_from_accel = cumtrapz_np(accelerations, times)
 displacement_from_accel = cumtrapz_np(velocity_from_accel, times)
 
-# plot height vs time, using both 
+# plot distance vs time, using both 
 # plt.figure(figsize=(10, 6))
 # plt.plot(times, heights_raw, label='Height (m)')
 # plt.plot(times, displacement_from_accel, label='Displacement from Acceleration (m)')
@@ -55,22 +50,52 @@ displacement_from_accel = cumtrapz_np(velocity_from_accel, times)
 v_z_ddt_h_raw = np.gradient(heights_raw, times)
 
 # smooth v_z_ddt_h_raw
-# v_z_ddt_h_raw = np.convolve(v_z_ddt_h_raw, np.ones(5)/5, mode='same')
+def moving_average_reflect(x, window):
+    pad = window // 2
+    x_pad = np.pad(x, (pad, pad), mode="reflect")
+    kernel = np.ones(window) / window
+    return np.convolve(x_pad, kernel, mode="valid")
+dt_med = np.median(np.diff(times))
+if not np.isfinite(dt_med) or dt_med <= 0:
+    dt_med = (times.iloc[-1] - times.iloc[0]) / max(10, len(times)-1)
 
-# Add quadratic model (t is offset by 3.0 s; only plot from t >= 3.0s)
-a = 0.215939883
-b = -15.6141367
-c = 240.38823
+win = int(round(0.5 / dt_med))
+win = max(win, 5)
+if win % 2 == 0:
+    win += 1
+if win >= len(times):
+    win = len(times) - 1 if (len(times) - 1) % 2 == 1 else len(times) - 2
+win = max(win, 5 if len(times) >= 5 else len(times))
+
+v_smooth = moving_average_reflect(v_z_ddt_h_raw, win)
+
+# fit quadratic
+mask_ascent = (times >= 3.0) & (times <= 23.0)
+t_since_burnout = (times[mask_ascent] - 3.0).values
+v_target = v_smooth[mask_ascent.values]
+coeffs = np.polyfit(t_since_burnout, v_target, 2)
+a, b, c = coeffs
+v_hat = np.polyval(coeffs, t_since_burnout)
+ss_res = np.sum((v_target - v_hat)**2)
+ss_tot = np.sum((v_target - np.mean(v_target))**2)
+R2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+
+print("Quadratic fit (ascent only, t=0 at 3.0 s):")
+print(f"a = {a:.9f}")
+print(f"b = {b:.9f}")
+print(f"c = {c:.9f}")
+print(f"R^2 = {R2:.6f}")
+
 mask = times >= 3.0
 t_shift = times[mask] - 3.0
-v_quadratic = a * t_shift**2 + b * t_shift + c
+vz_quadratic_fit_of_smoothed_ddt_h = a * t_shift**2 + b * t_shift + c
 
 if __name__ == "__main__":
-    # plot speed vs time, both v_z_ddt_h_raw and velocity_from_accel
+    # plot speed vs time, both v_z_ddt_h_raw, v_quadratic_fit_of_smoothed_ddt_h, and velocity_from_accel
     plt.figure(figsize=(10, 6))
-    plt.plot(times, v_z_ddt_h_raw, label='v_z_ddt_h_raw (m/s)')
-    plt.plot(times, velocity_from_accel, label='Velocity from Acceleration (m/s)')
-    plt.plot(times[mask], v_quadratic, label='v_z quadratic model fit (burnout onwards)', linestyle='--')
+    plt.plot(times, v_z_ddt_h_raw, label='v_z_ddt_h_raw')
+    plt.plot(times, velocity_from_accel, label='velocity_from_accel')
+    plt.plot(times[mask], vz_quadratic_fit_of_smoothed_ddt_h, label='vz_quadratic_fit_of_smoothed_ddt_h', linestyle='--')
 
     plt.xlabel('Time (s)')
     plt.ylabel('Speed (m/s)')
@@ -78,14 +103,6 @@ if __name__ == "__main__":
     plt.grid()
     plt.legend()
     plt.show()
-
-# Get the values of the quadratic model fit and the velocity from acceleration at t = 3
-v_z_quad_fit_at_burnout = c
-# compute velocity from acceleration at burnout (t = 3.0 s) by interpolating the velocity array
-total_velocity_from_accel_at_burnout = np.interp(3.0, times, velocity_from_accel)
-BURNOUT_V_Z_PROPORTION_OF_V = v_z_quad_fit_at_burnout/total_velocity_from_accel_at_burnout
-BURNOUT_V_HORIZONTAL_PORTION_OF_V = 1 - np.sqrt(BURNOUT_V_Z_PROPORTION_OF_V**2)
-
 
 # Back-calculation of drag
 # grab area, etc from main
