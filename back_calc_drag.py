@@ -69,10 +69,25 @@ win = max(win, 5 if len(times) >= 5 else len(times))
 
 v_smooth = moving_average_reflect(v_z_ddt_h_raw, win)
 
-# fit quadratic
+# fit quadratic to smoothed v_z_ddt_h
 mask_ascent = (times >= 3.0) & (times <= 23.0)
 t_since_burnout = (times[mask_ascent] - 3.0).values
 v_target = v_smooth[mask_ascent.values]
+coeffs = np.polyfit(t_since_burnout, v_target, 2)
+a_vz, b_vz, c_vz = coeffs
+v_hat = np.polyval(coeffs, t_since_burnout)
+ss_res = np.sum((v_target - v_hat)**2)
+ss_tot = np.sum((v_target - np.mean(v_target))**2)
+R2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+
+print("Quadratic fit for smoothed v_z_ddt_h (ascent only, t=0 at 3.0 s):")
+print(f"a = {a_vz:.9f}")
+print(f"b = {b_vz:.9f}")
+print(f"c = {c_vz:.9f}")
+print(f"R^2 = {R2:.6f}")
+
+# fit quadratic to velocity_from_accel
+v_target = velocity_from_accel[mask_ascent.values]
 coeffs = np.polyfit(t_since_burnout, v_target, 2)
 a, b, c = coeffs
 v_hat = np.polyval(coeffs, t_since_burnout)
@@ -80,15 +95,17 @@ ss_res = np.sum((v_target - v_hat)**2)
 ss_tot = np.sum((v_target - np.mean(v_target))**2)
 R2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
 
-print("Quadratic fit (ascent only, t=0 at 3.0 s):")
+print("Quadratic fit for velocity_from_accel (ascent only, t=0 at 3.0 s):")
 print(f"a = {a:.9f}")
 print(f"b = {b:.9f}")
 print(f"c = {c:.9f}")
 print(f"R^2 = {R2:.6f}")
 
-mask = times >= 3.0
+# use the same mask as the fit for all downstream computations
+mask = mask_ascent
 t_shift = times[mask] - 3.0
-vz_quadratic_fit_of_smoothed_ddt_h = a * t_shift**2 + b * t_shift + c
+vz_quadratic_fit_of_smoothed_ddt_h = a_vz * t_shift**2 + b_vz * t_shift + c_vz
+v_quadratic_fit_of_velocity_from_accel = a * t_shift**2 + b * t_shift + c
 
 if __name__ == "__main__":
     # plot speed vs time, both v_z_ddt_h_raw, v_quadratic_fit_of_smoothed_ddt_h, and velocity_from_accel
@@ -96,6 +113,7 @@ if __name__ == "__main__":
     plt.plot(times, v_z_ddt_h_raw, label='v_z_ddt_h_raw')
     plt.plot(times, velocity_from_accel, label='velocity_from_accel')
     plt.plot(times[mask], vz_quadratic_fit_of_smoothed_ddt_h, label='vz_quadratic_fit_of_smoothed_ddt_h', linestyle='--')
+    plt.plot(times[mask], v_quadratic_fit_of_velocity_from_accel, label='v_quadratic_fit_of_velocity_from_accel', linestyle='--')
 
     plt.xlabel('Time (s)')
     plt.ylabel('Speed (m/s)')
@@ -105,11 +123,13 @@ if __name__ == "__main__":
     plt.show()
 
 # Back-calculation of drag
-# grab area, etc from main
+"""
+For drag back-calculation, will approximate a straight vertical launch. It's reasonable for this case, as ork has ~24 s to apogee, of which only the last ~2.5 s is at an angle of over 15 deg from vertical (plus the most important part of the airbrakes drag algorithm is earlier in the flight where the airbrakes have more of an effect)
+"""
 
 # Hyperion I launch conditions
 launchpad_pressure_hyp1 = 86368 # Pa
-launchpad_temp_hyp1 = 25.8 # deg C
+launchpad_temp_hyp1 = 25.8 + 273.15 # K
 lapse_rate_SAC = -0.00817
 def temp_at_h_hyp1(h):
     return launchpad_temp_hyp1 + lapse_rate_SAC * h
@@ -158,8 +178,49 @@ MM_air = 0.0289644
 R_AIR = R_universal / MM_air
 
 def pressure_at_h_SAC(h):
-    return launchpad_pressure_hyp1 * pow(1-h*lapse_rate_SAC/(launchpad_temp_hyp1+273.15), grav_SAC/(R_AIR*lapse_rate_SAC))
+    return launchpad_pressure_hyp1 * pow(1-h*lapse_rate_SAC/(launchpad_temp_hyp1), grav_SAC/(R_AIR*lapse_rate_SAC))
 
 def air_density_fn(pressure, temp):
     return pressure / (R_AIR * temp)
 
+def mach_number(velocity, altitude):
+    temp = temp_at_h_hyp1(altitude)
+    a = np.sqrt(1.4 * R_AIR * temp)
+    return velocity / a
+
+# Hyperion I rocket parameters
+from main import ROCKET_REFERENCE_AREA
+hyp1_dry_mass = 20 # TODO update
+
+
+# Acceleration from velocity fit
+a_from_v_quadratic_fit_of_velocity_from_accel = 2 * a_vz * t_shift + b_vz
+a = a_from_v_quadratic_fit_of_velocity_from_accel
+a_from_drag = a + grav_SAC
+
+# plot a, a_from_drag on the same axes
+plt.figure(figsize=(10, 6))
+plt.plot(times[mask], a, label='a')
+plt.plot(times[mask], a_from_drag, label='a_from_drag')
+plt.xlabel('Time (s)')
+plt.ylabel('Acceleration (m/s^2)')
+plt.title('Rocket Acceleration vs Time')
+plt.grid()
+plt.legend()
+plt.show()
+
+air_density = air_density_fn(pressure_at_h_SAC(heights_raw), temp_at_h_hyp1(heights_raw))
+mach_numbers = mach_number(v_quadratic_fit_of_velocity_from_accel, heights_raw)
+
+F_from_drag = a_from_drag * hyp1_dry_mass
+Cd = 2 * F_from_drag / (ROCKET_REFERENCE_AREA * air_density * v_quadratic_fit_of_velocity_from_accel ** 2)
+
+# plot Cd vs Ma
+plt.figure(figsize=(10, 6))
+plt.plot(mach_numbers, Cd, label='Cd vs Ma')
+plt.xlabel('Mach Number')
+plt.ylabel('Drag Coefficient (Cd)')
+plt.title('Rocket Drag Coefficient vs Mach Number')
+plt.grid()
+plt.legend()
+plt.show()

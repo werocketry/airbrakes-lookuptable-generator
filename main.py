@@ -109,7 +109,7 @@ ROCKET_DIAMETER = 0.1427            # m
 ROCKET_RADIUS = ROCKET_DIAMETER / 2
 ROCKET_REFERENCE_AREA = np.pi * ROCKET_RADIUS**2  # m²
 
-def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data, lowered a bit to account for better finish on airframe
+def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data, lowered a bit to account for better finish on airframe. Check todos in back calc script before taking the curve it outputs
     """Hyperion Cd function from RASAero II"""
     # Simplified version - full implementation would include all points
     if mach <= 0.5:
