@@ -109,19 +109,8 @@ ROCKET_DIAMETER = 0.1427            # m
 ROCKET_RADIUS = ROCKET_DIAMETER / 2
 ROCKET_REFERENCE_AREA = np.pi * ROCKET_RADIUS**2  # m²
 
-def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data, lowered a bit to account for better finish on airframe. Check todos in back calc script before taking the curve it outputs
-    """Hyperion Cd function from RASAero II"""
-    # Simplified version - full implementation would include all points
-    if mach <= 0.5:
-        return 0.40
-    elif mach <= 0.8:
-        return 0.38
-    elif mach <= 0.95:
-        return 0.40 + (mach - 0.8) * (0.45 - 0.40) / (0.95 - 0.8)
-    elif mach <= 1.05:
-        return 0.45 + (mach - 0.95) * (0.60 - 0.45) / (1.05 - 0.95)
-    else:
-        return 0.60
+def hyperion_drag_coefficient(mach): # Looked at constant back-computed drag curves from last year's flight data (see hyperion1_back_calc_drag.ipynb), lowered a bit to account for better finish on airframe this year
+    return 0.41
 
 # Airbrakes parameters
 NUM_FLAPS = 3
@@ -141,6 +130,9 @@ BURNOUT_V_HORIZONTAL_PROPORTION_OF_V = 0.05
 BURNOUT_VX_PROPORTION_OF_V = BURNOUT_V_HORIZONTAL_PROPORTION_OF_V / np.sqrt(2)
 BURNOUT_VY_PROPORTION_OF_V = BURNOUT_VX_PROPORTION_OF_V
 BURNOUT_V_Z_PROPORTION_OF_V = np.sqrt(1 - BURNOUT_V_HORIZONTAL_PROPORTION_OF_V**2)
+
+BURNOUT_ORIENTATION = [0.965,-0.007,0.043,-0.257] # TODO confirm assumptions about this burnout condition
+BURNOUT_ANGULAR_VELOCITY = [0, 0, 0] # TODO confirm assumptions about this burnout condition
 
 # Lookup table parameters
 # TODO test speed of flight computer in accessing different size lookup tables, update this
@@ -283,13 +275,12 @@ def find_optimal_deployment(h_burnout, vz_burnout):
     rocket = copy.deepcopy(base_rocket)
     vx_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VX_PROPORTION_OF_V
     vy_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VY_PROPORTION_OF_V
-    burnout_orientation = [0.965,-0.007,0.043,-0.257] # TODO confirm assumptions about this burnout condition
     initial_solution=[
         0,
         0, 0, h_burnout,
         vx_burnout, vy_burnout, vz_burnout,
-        burnout_orientation[0], burnout_orientation[1], burnout_orientation[2], burnout_orientation[3],
-        0,0,0 # angular velocity # TODO confirm assumptions about this burnout condition
+        BURNOUT_ORIENTATION[0], BURNOUT_ORIENTATION[1], BURNOUT_ORIENTATION[2], BURNOUT_ORIENTATION[3],
+        BURNOUT_ANGULAR_VELOCITY[0], BURNOUT_ANGULAR_VELOCITY[1], BURNOUT_ANGULAR_VELOCITY[2]
     ]
 
     # First, check if no airbrake deployment needed
