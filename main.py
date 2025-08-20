@@ -22,7 +22,7 @@ import multiprocessing
 from multiprocessing import Pool
 
 
-TARGET_APOGEE_M = 3048              # 10,000 ft TODO update
+TARGET_APOGEE_M = 8500 * 0.3048     # TODO confirm final
 
 # ====================== ENVIRONMENT SETUP ====================
 LAUNCH_ALTITUDE_MSL = 364           # m, from https://earth.google.com/web/search/Launch+Canada+Launch+Pad/@47.9869503,-81.8485488,363.96383335a,679.10907018d,35y
@@ -112,7 +112,7 @@ ROCKET_DIAMETER = 0.1427            # m
 ROCKET_RADIUS = ROCKET_DIAMETER / 2
 ROCKET_REFERENCE_AREA = np.pi * ROCKET_RADIUS**2  # m²
 
-def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data
+def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve from last year's flight data, lowered a bit to account for better finish on airframe
     """Hyperion Cd function from RASAero II"""
     # Simplified version - full implementation would include all points
     if mach <= 0.5:
@@ -130,7 +130,7 @@ def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve
 NUM_FLAPS = 3
 PER_FLAP_AREA_M2 = 0.004215        # m² per flap TODO measure new flaps, update
 TOTAL_FLAP_AREA_M2 = NUM_FLAPS * PER_FLAP_AREA_M2  # m² total
-FLAP_CD = 0.95                     # Drag coefficient of flaps TODO update
+FLAP_CD = 0.9                      # Drag coefficient of flaps
 MAX_DEPLOYMENT_ANGLE = 45          # degrees TODO update
 DEPLOYMENT_RATE = 5.5              # deg/s under load TODO update after deployment rate under load testing
 RETRACTION_RATE = 10.0             # deg/s unloaded TODO update after unloaded retraction rate testing
@@ -138,6 +138,10 @@ CLOSING_MARGIN = 2 # s
 
 # Simulation parameters
 TOLERANCE_BINARY_SEARCH = 0.5       # degrees
+
+# Use the same portion of horizontal/vertical velocities at burnout as Hyperion I, assume same velocity in both horizontal directions. Actually imported later
+BURNOUT_VX_PORTION_OF_V = None
+BURNOUT_VY_PORTION_OF_V = None
 
 # Lookup table parameters
 # TODO test speed of flight computer in accessing different size lookup tables, update this
@@ -270,6 +274,15 @@ def find_optimal_deployment(h_burnout, vz_burnout):
 
     This function expects shared simulation objects to be created once and reused.
     """
+    # Lazily import the back_calc_drag constants here to avoid circular imports
+    from back_calc_drag import (
+        BURNOUT_V_Z_PROPORTION_OF_V,
+        BURNOUT_V_HORIZONTAL_PORTION_OF_V,
+    )
+    # compute the vx/vy proportions derived from the imported constants
+    BURNOUT_VX_PORTION_OF_V = BURNOUT_V_HORIZONTAL_PORTION_OF_V / np.sqrt(2)
+    BURNOUT_VY_PORTION_OF_V = BURNOUT_VX_PORTION_OF_V
+
     # If shared objects not created, create them now
     try:
         environment
@@ -278,16 +291,15 @@ def find_optimal_deployment(h_burnout, vz_burnout):
         environment, base_rocket = build_simulation_base()
     # Create fresh rocket instance for this simulation by deep-copying base_rocket. This avoids re-running the heavier construction logic and prevents accumulating airbrakes or other components on the same rocket object.
     rocket = copy.deepcopy(base_rocket)
-    # TODO confirm assumptions about burnout conditions
-    vx_burnout = 0.08*vz_burnout
-    vy_burnout = 0.08*vz_burnout
-    burnout_orientation = [0.965,-0.007,0.043,-0.257]
+    vx_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VX_PORTION_OF_V
+    vy_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VY_PORTION_OF_V
+    burnout_orientation = [0.965,-0.007,0.043,-0.257] # TODO confirm assumptions about this burnout conditions
     initial_solution=[
         0,
         0, 0, h_burnout,
         vx_burnout, vy_burnout, vz_burnout,
         burnout_orientation[0], burnout_orientation[1], burnout_orientation[2], burnout_orientation[3],
-        0,0,0 # angular velocity
+        0,0,0 # angular velocity # TODO confirm assumptions about this burnout conditions
     ]
 
     # First, check if no airbrake deployment needed
