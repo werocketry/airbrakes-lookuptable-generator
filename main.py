@@ -5,10 +5,7 @@ Usage: python main.py
 Output: lookup_table.csv
 """
 
-""" MAIN TODO s
-- Improve performance
-- Work on refining input parameters
-"""
+# MAIN TODO: Work on refining input parameters
 
 import numpy as np
 import csv
@@ -76,9 +73,9 @@ def get_local_gravity(latitude, h = 0):
     k2 = 2.10269e-09  # 1/m
     k3 = 7.37452e-14  # 1/m^2
 
-    g_launchpad = gamma_0 * (1 - (k1 - k2 * np.sin(phi)**2) * h + k3 * h**2)
+    g = gamma_0 * (1 - (k1 - k2 * np.sin(phi)**2) * h + k3 * h**2)
 
-    return g_launchpad
+    return g
 
 GRAVITY_MAGNITUDE = get_local_gravity(LAUNCH_LATITUDE, LAUNCH_ALTITUDE_MSL)
 R_universal = 8.3144598
@@ -128,7 +125,7 @@ def hyperion_drag_coefficient(mach): # TODO update with back-computed drag curve
 
 # Airbrakes parameters
 NUM_FLAPS = 3
-PER_FLAP_AREA_M2 = 0.004215        # m² per flap TODO measure new flaps, update
+PER_FLAP_AREA_M2 = 82*36.5*1e-6    # m² per flap
 TOTAL_FLAP_AREA_M2 = NUM_FLAPS * PER_FLAP_AREA_M2  # m² total
 FLAP_CD = 0.9                      # Drag coefficient of flaps
 MAX_DEPLOYMENT_ANGLE = 45          # degrees TODO update
@@ -293,13 +290,13 @@ def find_optimal_deployment(h_burnout, vz_burnout):
     rocket = copy.deepcopy(base_rocket)
     vx_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VX_PORTION_OF_V
     vy_burnout = vz_burnout / BURNOUT_V_Z_PROPORTION_OF_V * BURNOUT_VY_PORTION_OF_V
-    burnout_orientation = [0.965,-0.007,0.043,-0.257] # TODO confirm assumptions about this burnout conditions
+    burnout_orientation = [0.965,-0.007,0.043,-0.257] # TODO confirm assumptions about this burnout condition
     initial_solution=[
         0,
         0, 0, h_burnout,
         vx_burnout, vy_burnout, vz_burnout,
         burnout_orientation[0], burnout_orientation[1], burnout_orientation[2], burnout_orientation[3],
-        0,0,0 # angular velocity # TODO confirm assumptions about this burnout conditions
+        0,0,0 # angular velocity # TODO confirm assumptions about this burnout condition
     ]
 
     # First, check if no airbrake deployment needed
