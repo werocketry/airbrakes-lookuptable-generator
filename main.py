@@ -139,13 +139,13 @@ BURNOUT_ANGULAR_VELOCITY = [0, 0, 0] # TODO confirm assumptions about this burno
 HEIGHT_POINTS = 10
 VELOCITY_POINTS = 10
 
-# Burnout state ranges TODO update based on sensitivity analysis
+# Burnout state ranges
 # NOTE THEORETICAL_MAX_VELOCITY and THEORETICAL_MAX_BURNOUT_HEIGHT are actually significantly higher than the theoretical maxima. They assumes no drag, a perfectly vertical launch, and no weathercocking on leaving the rail(/no wind)
 THEORETICAL_MAX_VELOCITY = (MOTOR_IMPULSE / TOTAL_DRY_MASS - GRAVITY_MAGNITUDE * MOTOR_BURN_TIME) * 1.05
 thrust_times = np.array([pt[0] for pt in MOTOR_THRUST_CURVE])
 accels = np.array([pt[1] for pt in MOTOR_THRUST_CURVE]) / TOTAL_DRY_MASS
 THEORETICAL_MAX_BURNOUT_HEIGHT = np.trapezoid((MOTOR_BURN_TIME - thrust_times) * accels, thrust_times) * 1.05
-
+# TODO update minima based on sensitivity analysis
 
 BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, THEORETICAL_MAX_BURNOUT_HEIGHT      # m
 BURNOUT_VELOCITY_MIN, BURNOUT_VELOCITY_MAX = 200, THEORETICAL_MAX_VELOCITY        # m/s
@@ -176,7 +176,7 @@ def airbrakes_sim(environment, rocket, initial_solution, angle_this_run):
         t_to_close = deployment_angle / RETRACTION_RATE
         
         if t_to_close >= - vz / az - CLOSING_MARGIN or retraction_time: # retract if you need to retract to be closed at apogee, or have already started retracting
-            new_deployment_angle = max(0, deployment_angle - RETRACTION_RATE / sampling_rate) # TODO Could update from this worst case one which assumes drag doesn't decrease if it makes much difference/is worth it. Probably not for this launch
+            new_deployment_angle = max(0, deployment_angle - RETRACTION_RATE / sampling_rate) # worst case, assumes drag doesn't decrease
             if not retraction_time:
                 retraction_time = time
         else: # extend to/maintain the desired angle if not retracting yet
@@ -245,7 +245,7 @@ def build_simulation_base():
         center_of_mass_without_motor=1.3, # TODO update
         coordinate_system_orientation="tail_to_nose"
     )
-    rocket.set_rail_buttons(0.69, 0.21, 60) # TODO update
+    rocket.set_rail_buttons(0.69, 0.21, 60)
     rocket.add_nose(length=0.731, kind='von karman', position=2.073) # TODO update
     rocket.add_motor(motor, position=0)
     rocket.add_trapezoidal_fins( # TODO update
