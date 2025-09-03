@@ -8,6 +8,7 @@ Output: lookup_table.csv
 # MAIN TODO: Work on refining input parameters
 
 import numpy as np
+from scipy import integrate
 import csv
 from datetime import datetime
 import time
@@ -97,7 +98,7 @@ MOTOR_THRUST_CURVE = [              # Time (s), Thrust (N)
     [0.9, 2876], [1.2, 2938], [1.5, 2889], [1.8, 2785],
     [2.1, 2573], [2.4, 2349], [2.7, 2182], [2.99, 85], [3, 0]
     ] # from https://www.thrustcurve.org/motors/Cesaroni/7450M2505-P/
-MOTOR_IMPULSE = np.trapezoid(
+MOTOR_IMPULSE = integrate.trapezoid(
     np.array([point[1] for point in MOTOR_THRUST_CURVE]),
     np.array([point[0] for point in MOTOR_THRUST_CURVE])
 ) # both thrustcurve.org files list lower impulses than the 7450 N*s from the mfr, and which are much closer to the integral of the thrust curve
@@ -144,7 +145,7 @@ VELOCITY_POINTS = 10
 THEORETICAL_MAX_VELOCITY = (MOTOR_IMPULSE / TOTAL_DRY_MASS - GRAVITY_MAGNITUDE * MOTOR_BURN_TIME) * 1.05
 thrust_times = np.array([pt[0] for pt in MOTOR_THRUST_CURVE])
 accels = np.array([pt[1] for pt in MOTOR_THRUST_CURVE]) / TOTAL_DRY_MASS
-THEORETICAL_MAX_BURNOUT_HEIGHT = np.trapezoid((MOTOR_BURN_TIME - thrust_times) * accels, thrust_times) * 1.05
+THEORETICAL_MAX_BURNOUT_HEIGHT = integrate.trapezoid((MOTOR_BURN_TIME - thrust_times) * accels, thrust_times) * 1.05
 # TODO update minima based on sensitivity analysis
 
 BURNOUT_HEIGHT_MIN, BURNOUT_HEIGHT_MAX = 240, THEORETICAL_MAX_BURNOUT_HEIGHT      # m
@@ -501,4 +502,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # print(find_optimal_deployment(1850, 200))
+    # print(find_optimal_deployment(1600, 185))
